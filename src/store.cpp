@@ -183,7 +183,7 @@ FileStoreBase::FileStoreBase(StoreQueue* storeq,
     baseFilePath("/tmp"),
     subDirectory(""),
     //filePath("/tmp"),
-    baseFileName(category),
+    baseFileName("file"),
     baseSymlinkName(""),
     maxSize(DEFAULT_FILESTORE_MAX_SIZE),
     maxWriteSize(DEFAULT_FILESTORE_MAX_WRITE_SIZE),
@@ -359,7 +359,7 @@ void FileStoreBase::copyCommon(const FileStoreBase *base) {
       filePath += "/" + subDirectory;
     }
   */
-  baseFileName = categoryHandled;
+  baseFileName = "file";
 }
 
 bool FileStoreBase::open() {

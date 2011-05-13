@@ -1,4 +1,4 @@
-//  Copyright (c) 2007-2008 Facebook
+//  Copyright(c) 2007-2008 Facebook
 //
 //  Licensed under the Apache License, Version 2.0 (the "License");
 //  you may not use this file except in compliance with the License.
@@ -21,8 +21,12 @@
 // @author Avinash Lakshman
 // @author Anthony Giardullo
 
+#include <ctime>
+#include <sstream>
+
 #include "common.h"
 #include "scribe_server.h"
+#include "json/json.h"
 
 using namespace apache::thrift::concurrency;
 
@@ -134,6 +138,7 @@ scribeHandler::scribeHandler(unsigned long int server_port, const std::string& c
     maxMsgPerSecond(DEFAULT_MAX_MSG_PER_SECOND),
     maxConn(DEFAULT_MAX_CONN),
     maxQueueSize(DEFAULT_MAX_QUEUE_SIZE),
+    splitByPolarEventTime(false),
     newThreadPerCategory(true) {
   time(&lastMsgTime);
   scribeHandlerLock = scribe::concurrency::createReadWriteMutex();
@@ -391,6 +396,55 @@ void scribeHandler::addMessage(
   }
 }
 
+string scribeHandler::extractCategory(const LogEntry& logEntry) {
+
+	if (!splitByPolarEventTime) {
+		return logEntry.category;
+	}
+	
+	string message = logEntry.message;
+	//string message = "{\"uuid\": \"-4c19f412ff3e1af9\", \"deviceModel\": \"8330\", \"timestamp\": \"1304109440\", \"mcc\": \"103d\", \"carrier\": \"Sprint PCS\", \"deviceType\": \"blackberry\", \"eventTimestamp\": \"1304091003\", \"userhash\": \"3a1e5dc0c1499eb05bba7b9a4a1a4e82bd4417d2\", \"component\": \"core\", \"mnc\": \"0\", \"event\": \"appForeground\", \"publication\": \"si\"}";
+
+	Json::Reader jsonReader;
+	Json::Value root;
+
+	try {
+		bool parsingSuccessful = jsonReader.parse(message, root);
+	
+		if (parsingSuccessful)  {
+			Json::Value eventTimestampVal = root.get("eventTimestamp", "DoesNotExist");
+			if (!eventTimestampVal.isString()) {
+				return "event_timestamp_not_string";
+			}
+
+			string eventTimestampValStr = eventTimestampVal.asString();
+			
+			if (eventTimestampValStr.compare("DoesNotExist") == 0) {
+				return "event_timestamp_not_in_packet";
+			} 
+
+			long int eventTimestampLong = atol(eventTimestampValStr.c_str());
+			long int minusSec = eventTimestampLong % 900L;
+			long int timeBucketLong = eventTimestampLong - minusSec;
+			time_t sec = (time_t)timeBucketLong;
+
+			tm * tmPtr = localtime(&sec);
+
+			std::ostringstream oss;
+			oss << logEntry.category << "/event_time_polar_split/" <<
+				tmPtr->tm_year + 1900  << '/'
+				<< setw(2) << setfill('0') << tmPtr->tm_mon + 1 << '/'
+				<< setw(2) << setfill('0')  << tmPtr->tm_mday << '/'
+				<< setw(2) << setfill('0')  << tmPtr->tm_hour << '/'
+				<< setw(2) << setfill('0')  << tmPtr->tm_min;
+			return oss.str();
+		} else {
+			return "bad_json_format";
+		}	
+	} catch (exception e) {
+		return "bad_json_format";
+	}
+}
 
 ResultCode scribeHandler::Log(const vector<LogEntry>&  messages) {
   ResultCode result = TRY_LATER;
@@ -406,9 +460,13 @@ ResultCode scribeHandler::Log(const vector<LogEntry>&  messages) {
     goto end;
   }
 
+
   for (vector<LogEntry>::const_iterator msg_iter = messages.begin();
        msg_iter != messages.end();
        ++msg_iter) {
+  
+
+
 
     // disallow blank category from the start
     if ((*msg_iter).category.empty()) {
@@ -417,7 +475,8 @@ ResultCode scribeHandler::Log(const vector<LogEntry>&  messages) {
     }
 
     shared_ptr<store_list_t> store_list;
-    string category = (*msg_iter).category;
+
+    string category = scribeHandler::extractCategory(*msg_iter);
 
     category_map_t::iterator cat_iter;
     // First look for an exact match of the category
@@ -576,6 +635,14 @@ void scribeHandler::initialize() {
     } else {
       newThreadPerCategory = true;
     }
+    
+	config.getString("split_by_polar_event_time", temp);
+	if (0 == temp.compare("yes")) {
+      splitByPolarEventTime = true;
+    } else {
+      splitByPolarEventTime = false;
+    }
+
 
     unsigned long int old_port = port;
     config.getUnsigned("port", port);

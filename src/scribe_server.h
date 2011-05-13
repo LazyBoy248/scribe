@@ -100,6 +100,7 @@ class scribeHandler : virtual public scribe::thrift::scribeIf,
   unsigned long long maxQueueSize;
   StoreConf config;
   bool newThreadPerCategory;
+  bool splitByPolarEventTime;
 
   /* mutex to syncronize access to scribeHandler.
    * A single mutex is fine since it only needs to be locked in write mode
@@ -112,6 +113,8 @@ class scribeHandler : virtual public scribe::thrift::scribeIf,
   scribeHandler();
   scribeHandler(const scribeHandler& rhs);
   const scribeHandler& operator=(const scribeHandler& rhs);
+  std::string extractCategory(const scribe::thrift::LogEntry& logEntry);
+
 
  protected:
   bool throttleDeny(int num_messages); // returns true if overloaded
